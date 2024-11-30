@@ -1,0 +1,12 @@
+
+
+.env
+
+node_modules
+
+*.env
+
+*.log
+
+package-lock.json
+.vercel
