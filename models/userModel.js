@@ -28,8 +28,19 @@ const userSchema = new mongoose.Schema({
         type: String,
         default: "",
     },
+    signature: {
+        type: String, 
+        default: "",
+    },
+    isVerified: {
+        type: Boolean,
+        default: false, // New users will have false by default
+    },
 });
 
 const User = mongoose.model("User", userSchema);
 
 export default User;
+
+
+

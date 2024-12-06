@@ -1,217 +1,201 @@
-import Course from "../models/courseModel.js";
-import cloudinary from "../utils/cloudinary.js";
-import fs from "fs";
-import mongoose from "mongoose";
+import multer from 'multer';
+import cloudinary from 'cloudinary';
+import dotenv from 'dotenv';
+import Course from '../models/courseModel.js';
 
-// Function to delete local files after uploading to Cloudinary
-const deleteLocalFile = (filePath) => {
-  fs.unlink(filePath, (err) => {
-    if (err) console.error("Error deleting local file:", err);
+dotenv.config();
+
+// Configure Multer to store files in memory
+const storage = multer.memoryStorage();
+const upload = multer({ storage }).fields([
+  { name: 'thumbnail', maxCount: 1 },
+  { name: 'video', maxCount: 1 },
+  { name: 'pdf', maxCount: 1 },
+]);
+
+// Configure Cloudinary
+cloudinary.v2.config({
+  cloud_name: process.env.CLOUDINARY_CLOUD_NAME,
+  api_key: process.env.CLOUDINARY_API_KEY,
+  api_secret: process.env.CLOUDINARY_API_SECRET,
+});
+
+// Upload files to Cloudinary
+const uploadToCloudinary = async (fileBuffer, folder, resourceType) => {
+  return new Promise((resolve, reject) => {
+    const uploadStream = cloudinary.v2.uploader.upload_stream(
+      { folder, resource_type: resourceType },
+      (error, result) => {
+        if (error) {
+          console.error('Cloudinary Upload Error:', error);
+          reject(new Error('Failed to upload file to Cloudinary'));
+        } else {
+          resolve(result.secure_url);
+        }
+      }
+    );
+    uploadStream.end(fileBuffer); // Pipe the buffer to the upload stream
   });
 };
 
-// Upload file to Cloudinary
-const uploadToCloudinary = async (filePath, folder, resourceType = "auto") => {
-  try {
-    const result = await cloudinary.uploader.upload(filePath, {
-      folder,
-      resource_type: resourceType,
-    });
-    return result;
-  } catch (error) {
-    console.error("Cloudinary Upload Error:", error);
-    throw new Error("Invalid file upload");
-  } finally {
-    // Delete local file after upload
-    deleteLocalFile(filePath);
-  }
-};
-
+// Create Course
 export const createCourse = async (req, res) => {
-  const { title, description, category, instructor, isPaid, price } = req.body;
+  upload(req, res, async (err) => {
+    if (err) return res.status(400).json({ error: 'File upload failed' });
 
-  console.log(title,description,category,instructor,isPaid,price);
+    try {
+      const { title, description, category, instructor, isPaid, price, discountPrice, duration } = req.body;
 
-  if (!instructor ) {
-    return res.status(400).json({ message: 'Invalid instructor ID.' });
-  }
-  console.log("Instructor ID:", instructor);
-  const { thumbnail, video, pdf } = req.files || {};
+      const courseData = { title, description, category, instructor, isPaid, price, discountPrice, duration };
+      // Upload and assign URLs for each file type
+      if (req.files.thumbnail?.[0]) {
+        courseData.thumbnail = await uploadToCloudinary(req.files.thumbnail[0].buffer, 'course_thumbnails', 'image');
+      }
+      if (req.files.video?.[0]) {
+        courseData.videoUrl = await uploadToCloudinary(req.files.video[0].buffer, 'course_videos', 'video');
+      }
+      if (req.files.pdf?.[0]) {
+        // PDF (updated resource_type)
+courseData.pdfUrl = await uploadToCloudinary(req.files.pdf[0].buffer, 'courses/pdfs', 'image');
+      }
 
-  // Check if required fields are missing
-  if (!title || !description || !category || !instructor) {
-    return res.status(400).json({ message: "Missing required fields" });
-  }
-
-  try {
-    // Upload files to Cloudinary
-    const thumbnailUpload = thumbnail?.[0]?.path
-      ? await uploadToCloudinary(thumbnail[0].path, "course_thumbnails", "image")
-      : null;
-
-    const videoUpload = video?.[0]?.path
-      ? await uploadToCloudinary(video[0].path, "course_videos", "video")
-      : null;
-
-    const pdfUpload = pdf?.[0]?.path
-      ? await uploadToCloudinary(pdf[0].path, "course_pdfs", "raw")
-      : null;
-
-    // Create the course and save it to MongoDB
-    const course = new Course({
-      title,
-      description,
-      category,
-      instructor,
-      thumbnail: thumbnailUpload?.secure_url || "",
-      videoUrl: videoUpload?.secure_url || "",
-      pdfUrl: pdfUpload?.secure_url || "",
-      isPaid,
-      price,
-    });
-
-    const savedCourse = await course.save();
-    res.status(201).json(savedCourse);
-  } catch (error) {
-    console.error("Error creating course:", error);
-    res.status(500).json({ message: "Error creating course", error: error.message });
-  }
+      // Save course to the database
+      const course = await Course.create(courseData);
+      res.status(201).json({ message: 'Course created successfully', course });
+    } catch (error) {
+      console.error('Error creating course:', error);
+      res.status(500).json({ error: 'Server error' });
+    }
+  });
 };
 
 
 
 
-// Edit a course
-export const editCourse = async (req, res) => {
-  const { id } = req.params;
-  const { title, description, category, isPaid, price } = req.body;
-  const { thumbnail, video, pdf } = req.files || {};
 
-  if (!mongoose.Types.ObjectId.isValid(id)) {
-    return res.status(400).json({ message: "Invalid course ID" });
-  }
 
-  try {
-    const course = await Course.findById(id);
-    if (!course) return res.status(404).json({ message: "Course not found" });
-
-    // Remove previous files from Cloudinary if new files are uploaded
-    if (thumbnail && course.thumbnail) {
-      const publicId = course.thumbnail.split("/").pop().split(".")[0];
-      await deleteFromCloudinary(publicId);
-    }
-    if (video && course.videoUrl) {
-      const publicId = course.videoUrl.split("/").pop().split(".")[0];
-      await deleteFromCloudinary(publicId);
-    }
-    if (pdf && course.pdfUrl) {
-      const publicId = course.pdfUrl.split("/").pop().split(".")[0];
-      await deleteFromCloudinary(publicId);
-    }
-
-    // Upload new files to Cloudinary
-    const thumbnailUpload = thumbnail ? await uploadToCloudinary(thumbnail.path, "course_thumbnails") : null;
-    const videoUpload = video ? await uploadToCloudinary(video.path, "course_videos") : null;
-    const pdfUpload = pdf ? await uploadToCloudinary(pdf.path, "course_pdfs") : null;
-
-    const updatedCourse = await Course.findByIdAndUpdate(
-      id,
-      {
-        title,
-        description,
-        category,
-        thumbnail: thumbnailUpload?.secure_url || course.thumbnail,
-        videoUrl: videoUpload?.secure_url || course.videoUrl,
-        pdfUrl: pdfUpload?.secure_url || course.pdfUrl,
-        isPaid,
-        price,
-      },
-      { new: true, runValidators: true }
+const uploadToCloudinaryForUpdate = async (fileBuffer, folder, resourceType) => {
+  return new Promise((resolve, reject) => {
+    const uploadStream = cloudinary.v2.uploader.upload_stream(
+      { folder, resource_type: resourceType },
+      (error, result) => {
+        if (error) {
+          console.error('Cloudinary Upload Error:', error);
+          reject(new Error('Failed to upload file to Cloudinary'));
+        } else {
+          resolve(result.secure_url);
+        }
+      }
     );
-
-    res.status(200).json(updatedCourse);
-  } catch (error) {
-    res.status(500).json({ message: "Error updating course", error: error.message });
-  }
+    uploadStream.end(fileBuffer);
+  });
 };
 
-// Delete course
-export const deleteCourse = async (req, res) => {
-  const { id } = req.params;
-
-  if (!mongoose.Types.ObjectId.isValid(id)) {
-    return res.status(400).json({ message: "Invalid course ID" });
-  }
-
+const deleteFromCloudinary = async (url, resourceType) => {
   try {
-    const course = await Course.findByIdAndDelete(id);
-    if (!course) return res.status(404).json({ message: "Course not found" });
-
-    // Remove files from Cloudinary
-    if (course.thumbnail) {
-      const publicId = course.thumbnail.split("/").pop().split(".")[0];
-      await deleteFromCloudinary(publicId);
-    }
-    if (course.videoUrl) {
-      const publicId = course.videoUrl.split("/").pop().split(".")[0];
-      await deleteFromCloudinary(publicId);
-    }
-    if (course.pdfUrl) {
-      const publicId = course.pdfUrl.split("/").pop().split(".")[0];
-      await deleteFromCloudinary(publicId);
-    }
-
-    res.status(200).json({ message: "Course deleted successfully" });
+    const publicId = url.split('/').pop().split('.')[0];
+    await cloudinary.v2.uploader.destroy(publicId, { resource_type: resourceType });
   } catch (error) {
-    res.status(500).json({ message: "Error deleting course", error: error.message });
+    console.error('Error deleting file from Cloudinary:', error);
   }
+};
+
+export const updateCourse = async (req, res) => {
+  console.log('route is hit');
+  upload(req, res, async (err) => {
+    if (err) return res.status(400).json({ error: 'File upload failed' });
+
+
+    console.log('req.body is' , req.body)
+
+    try {
+      const { id } = req.params;
+      const { title, description, category, isPaid, price, discountPrice, duration } = req.body;
+
+      console.log('description:', description);
+
+      const existingCourse = await Course.findById(id);
+      if (!existingCourse) return res.status(404).json({ error: 'Course not found' });
+
+      const courseData = { title, description, category, isPaid, price, discountPrice, duration };
+
+      // Handle thumbnail upload
+      if (req.files?.thumbnail?.[0]) {
+        if (existingCourse.thumbnail) {
+          await deleteFromCloudinary(existingCourse.thumbnail, 'image');
+        }
+        courseData.thumbnail = await uploadToCloudinaryForUpdate(req.files.thumbnail[0].buffer, 'course_thumbnails', 'image');
+      } else {
+        courseData.thumbnail = existingCourse.thumbnail;
+      }
+
+      // Handle video upload
+      if (req.files?.video?.[0]) {
+        if (existingCourse.videoUrl) {
+          await deleteFromCloudinary(existingCourse.videoUrl, 'video');
+        }
+        courseData.videoUrl = await uploadToCloudinaryForUpdate(req.files.video[0].buffer, 'course_videos', 'video');
+      } else {
+        courseData.videoUrl = existingCourse.videoUrl;
+      }
+
+      // Handle PDF upload
+      if (req.files?.pdf?.[0]) {
+        if (existingCourse.pdfUrl) {
+          await deleteFromCloudinary(existingCourse.pdfUrl, 'image');
+        }
+        courseData.pdfUrl = await uploadToCloudinaryForUpdate(req.files.pdf[0].buffer, 'courses/pdfs', 'pdf');
+      } else {
+        courseData.pdfUrl = existingCourse.pdfUrl;
+      }
+
+      // Update the course with the new data
+      const updatedCourse = await Course.findByIdAndUpdate(id, courseData, { new: true });
+
+      return res.status(200).json(updatedCourse);
+    } catch (error) {
+      console.error("Error updating course:", error);
+      return res.status(500).json({ error: 'Failed to update course' });
+    }
+  });
 };
 
 
 
 
-// Get course by ID
-export const getCourseById = async (req, res) => {
-  console.log('fetching course by id');
-  const { id } = req.params;
-  console.log(id);
-
-  if (!mongoose.Types.ObjectId.isValid(id)) {
-    return res.status(400).json({ message: "Invalid course ID" });
-  }
-
+// Get a Course by ID
+export const getCourse = async (req, res) => {
   try {
-    const course = await Course.findById(id)
-      .populate("instructor", "username email role") // Populate instructor details
-      .populate("studentsEnrolled", "username email role"); // Populate enrolled students
-
-    if (!course) {
-      return res.status(404).json({ message: "Course not found" });
-    }
-
-    res.status(200).json(course);
+    const { id } = req.params;
+    const course = await Course.findById(id).populate('instructor');
+    if (!course) return res.status(404).json({ error: 'Course not found' });
+    res.status(200).json({ course });
   } catch (error) {
-    res.status(500).json({ message: "Error fetching course", error: error.message });
+    console.error('Error fetching course:', error);
+    res.status(500).json({ error: 'Server error' });
   }
 };
 
-
-// Get all courses
+// Get All Courses
 export const getAllCourses = async (req, res) => {
   try {
-    console.log('fetching all courses');
-    // Fetch all courses from the database
-    const courses = await Course.find()
-      .populate("instructor", "username email role") // Populate instructor details
-      .populate("studentsEnrolled", "username email role") // Populate enrolled students
-      .sort({ createdAt: -1 }); // Sort by most recent courses
-
-    res.status(200).json({
-      totalCourses: courses.length,
-      courses,
-    });
+    const courses = await Course.find().populate('instructor');
+    res.status(200).json({ courses });
   } catch (error) {
-    console.error("Error fetching all courses:", error);
-    res.status(500).json({ message: "Error fetching all courses", error: error.message });
+    console.error('Error fetching courses:', error);
+    res.status(500).json({ error: 'Server error' });
+  }
+};
+
+// Delete a Course
+export const deleteCourse = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const course = await Course.findByIdAndDelete(id);
+    if (!course) return res.status(404).json({ error: 'Course not found' });
+    res.status(200).json({ message: 'Course deleted successfully' });
+  } catch (error) {
+    console.error('Error deleting course:', error);
+    res.status(500).json({ error: 'Server error' });
   }
 };

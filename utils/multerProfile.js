@@ -1,52 +1,47 @@
+import multer from "multer";
 import path from "path";
 import { fileURLToPath } from "url";
-import multer from "multer";
+import fs from "fs";
 
-// Get the current file's directory
+// Get directory
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
-// Ensure the uploads folder exists (if not, create it)
-import fs from "fs";
+// Ensure uploads folder exists
 const uploadDir = path.join(__dirname, "../uploads");
 
 if (!fs.existsSync(uploadDir)) {
   fs.mkdirSync(uploadDir);
 }
 
-// Multer storage setup
+// Storage for profilePic and signature
 const storage = multer.diskStorage({
   destination: (req, file, cb) => {
-    cb(null, uploadDir); // Save files to the uploads directory
+    cb(null, uploadDir);
   },
   filename: (req, file, cb) => {
     const uniqueName = `${Date.now()}-${file.originalname}`;
-    cb(null, uniqueName); // Give each file a unique name
+    cb(null, uniqueName);
   },
 });
 
-// File filter to restrict file types
+// Restrict file types
 const fileFilter = (req, file, cb) => {
-  const allowedMimeTypes = [
-    "image/jpeg", 
-    "image/png", 
-    "video/mp4", 
-    "application/pdf"
-  ];
+  const allowedMimeTypes = ["image/jpeg", "image/png"];
   if (allowedMimeTypes.includes(file.mimetype)) {
     cb(null, true); // Accept the file
   } else {
-    cb(new Error("Invalid file type")); // Reject the file
+    cb(new Error("Only JPEG and PNG images are allowed"));
   }
 };
 
-// Multer setup with storage and file filter
-const upload = multer({
+// Multer instance for profilePic and signature
+const uploadProfile = multer({
   storage,
   fileFilter,
-});
+}).fields([
+  { name: "profilePic", maxCount: 1 },
+  { name: "signature", maxCount: 1 },
+]);
 
-export default upload;
-
-
-
+export default uploadProfile;

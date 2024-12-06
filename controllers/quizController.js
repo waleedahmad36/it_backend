@@ -26,7 +26,7 @@ export const createQuiz = async (req, res) => {
 // Controller to get all quizzes
 export const getAllQuizzes = async (req, res) => {
   try {
-    const quizzes = await Quiz.find();  // Find all quizzes
+    const quizzes = await Quiz.find().populate('instructor','username email profilePic signature');  // Find all quizzes
     res.status(200).json(quizzes);  // Return the list of quizzes
   } catch (error) {
     console.error("Error fetching quizzes:", error);
@@ -39,7 +39,7 @@ export const getQuizById = async (req, res) => {
   try {
     const quizId = req.params.id;
 
-    const quiz = await Quiz.findById(quizId);  // Find quiz by ID
+    const quiz = await Quiz.findById(quizId).populate('instructor', 'username email signature profilePic');  // Find quiz by ID
     if (!quiz) {
       return res.status(404).json({ message: "Quiz not found" });
     }

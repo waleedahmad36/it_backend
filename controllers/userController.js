@@ -83,7 +83,7 @@ export const signup = async (req, res) => {
     await newUser.save();
 
     // Generate token and set cookie
-    generateTokenAndSetCookie(newUser._id, res);
+    // generateTokenAndSetCookie(newUser._id, res);
 
     res.status(201).json({
       success: true,
@@ -120,6 +120,11 @@ export const login = async (req, res) => {
       return res.status(400).json({ success: false, message: "Invalid credentials" });
     }
 
+     // Check if user is verified
+     if (!user.isVerified) {
+      return res.status(403).json({ success: false, message: "You are not verified" });
+    }
+
     // Generate token and set cookie
     generateTokenAndSetCookie(user._id, res);
 
@@ -140,7 +145,9 @@ export const login = async (req, res) => {
 // Logout Controller
 export const logout = async (req, res) => {
   try {
+    console.log('route hit')
     res.clearCookie("mern_lms");
+    console.log('logged out successfully')
     res.status(200).json({ success: true, message: "Logged out successfully" });
   } catch (error) {
     console.log("Error in logout controller:", error.message);
@@ -168,6 +175,7 @@ export const authCheck = async (req, res) => {
 
 // Profile Update Controller
 export const updateProfile = async (req, res) => {
+  console.log('route hit')
   try {
     const { username, bio } = req.body;
     const userId = req.user._id; // Assumes user ID is extracted from the authenticated token
@@ -178,43 +186,62 @@ export const updateProfile = async (req, res) => {
       return res.status(404).json({ success: false, message: "User not found" });
     }
 
-    // Handle profilePic upload to Cloudinary
     let profilePicUrl = user.profilePic;
-    if (req.file) {
-      // Remove old profilePic from Cloudinary if it exists
+    let signatureUrl = user.signature;
+
+    // Handle profilePic upload to Cloudinary
+    if (req.files?.profilePic) {
       if (user.profilePic) {
         const oldPublicId = user.profilePic.split("/").pop().split(".")[0];
         await cloudinary.uploader.destroy(`profile_pics/${oldPublicId}`);
       }
-
-      // Upload new profilePic to Cloudinary
-      const uploadResult = await uploadToCloudinary(req.file.path, "profile_pics", "image");
-      profilePicUrl = uploadResult.secure_url;
+      const profilePicResult = await uploadToCloudinary(
+        req.files.profilePic[0].path,
+        "profile_pics",
+        "image"
+      );
+      profilePicUrl = profilePicResult.secure_url;
     }
 
-    // Update user profile
+    // Handle signature upload to Cloudinary
+    if (req.files?.signature) {
+      console.log('req file is', req.files)
+      console.log('req file signature', req.files.signature)
+      if (user.signature) {
+        const oldSignatureId = user.signature.split("/").pop().split(".")[0];
+        await cloudinary.uploader.destroy(`signatures/${oldSignatureId}`);
+      }
+      const signatureResult = await uploadToCloudinary(
+        req.files.signature[0].path,
+        "signatures",
+        "image"
+      );
+      signatureUrl = signatureResult.secure_url;
+    }
+
+    // Update user details in the database
     const updatedUser = await User.findByIdAndUpdate(
       userId,
       {
         username: username || user.username,
         bio: bio || user.bio,
         profilePic: profilePicUrl,
+        signature: signatureUrl,
       },
       { new: true, runValidators: true }
     );
 
     res.status(200).json({
       success: true,
-      user: {
-        ...updatedUser._doc,
-        password: "", // Exclude password from response
-      },
+      user: { ...updatedUser._doc, password: "" }, // Exclude password from the response
     });
   } catch (error) {
     console.log("Error in updateProfile controller:", error.message);
     res.status(500).json({ success: false, message: "Internal server error" });
   }
 };
+
+
 
 // Fetch All Instructors Controller
 export const fetchAllInstructors = async (req, res) => {
